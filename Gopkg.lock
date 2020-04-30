@@ -1174,7 +1174,7 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:5abe30979fffe6f278c06a1456f623a0e7b8fc738023b680e56b7595ebe64397"
+  digest = "1:3dff9c49501dfc809c9f009d2922b5c9af8fc979d48d6a5dfbd8bea1617e62fa"
   name = "github.com/tektoncd/pipeline"
   packages = [
     "cmd/creds-init",
@@ -1255,7 +1255,7 @@
     "pkg/workspace",
   ]
   pruneopts = "T"
-  revision = "b0918cad6e633584124d53b53492c770d974904b"
+  revision = "1e98ecaad25b75db7070a3f9797556ab364056fc"
 
 [[projects]]
   branch = "master"
@@ -2296,7 +2296,7 @@
 
 [[projects]]
   branch = "release-0.14"
-  digest = "1:7528d5965c8635d9ff5c359b5b87cdb7d04142f45037ef5953041725f2cdecff"
+  digest = "1:575d23b8dff745edacf5ff6231f7fe1db225bb80cbd8a025787a6b424182c33d"
   name = "knative.dev/eventing"
   packages = [
     "cmd/apiserver_receive_adapter",
@@ -2431,11 +2431,11 @@
     "pkg/utils",
   ]
   pruneopts = "T"
-  revision = "02bc51668a0c7d2d8cbb56823c5aecbeec46253d"
+  revision = "92e70753ae3507cb9dcbde9f4add9e38e843c132"
 
 [[projects]]
   branch = "release-0.14"
-  digest = "1:92e2deda68a63edd698f9b888359444be346d78d0749f1255a5c87d27f7757e6"
+  digest = "1:95af413ed31de486ca053bbac21410101f50c42a11b1da11b1192e9dc077b6d0"
   name = "knative.dev/eventing-contrib"
   packages = [
     "github/cmd/receive_adapter",
@@ -2475,7 +2475,7 @@
     "kafka/source/pkg/reconciler/resources",
   ]
   pruneopts = "T"
-  revision = "7a222bde2d90a3ca6d5a75f7cd5241e96fa626bb"
+  revision = "48a9bd14ec259b9237905c5cbd267bd3349bbf4a"
 
 [[projects]]
   branch = "release-0.14"

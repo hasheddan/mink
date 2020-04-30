@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"time"
 
+	apisconfig "github.com/tektoncd/pipeline/pkg/apis/config"
 	"github.com/tektoncd/pipeline/pkg/apis/pipeline"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -71,6 +72,10 @@ const (
 	// TaskRunSpecStatusCancelled indicates that the user wants to cancel the task,
 	// if not already cancelled or terminated
 	TaskRunSpecStatusCancelled = "TaskRunCancelled"
+
+	// TaskRunReasonCancelled indicates that the TaskRun has been cancelled
+	// because it was requested so by the user
+	TaskRunReasonCancelled = "TaskRunCancelled"
 )
 
 // TaskRunInputs holds the input values that this task was invoked with.
@@ -120,6 +125,17 @@ func (trs *TaskRunStatus) MarkResourceNotConvertible(err *CannotConvertError) {
 	})
 }
 
+// MarkResourceFailed sets the ConditionSucceeded condition to ConditionFalse
+// based on an error that occurred and a reason
+func (trs *TaskRunStatus) MarkResourceFailed(reason string, err error) {
+	taskRunCondSet.Manage(trs).SetCondition(apis.Condition{
+		Type:    apis.ConditionSucceeded,
+		Status:  corev1.ConditionFalse,
+		Reason:  reason,
+		Message: err.Error(),
+	})
+}
+
 // TaskRunStatusFields holds the fields of TaskRun's status.  This is defined
 // separately and inlined so that other types can readily consume these fields
 // via duck typing.
@@ -161,6 +177,9 @@ type TaskRunStatusFields struct {
 	// The list has one entry per sidecar in the manifest. Each entry is
 	// represents the imageid of the corresponding sidecar.
 	Sidecars []SidecarState `json:"sidecars,omitempty"`
+
+	// TaskSpec contains the Spec from the dereferenced Task definition used to instantiate this TaskRun.
+	TaskSpec *TaskSpec `json:"taskSpec,omitempty"`
 }
 
 // TaskRunResult used to describe the results of a task
@@ -201,18 +220,18 @@ func (trs *TaskRunStatus) SetCondition(newCond *apis.Condition) {
 
 // StepState reports the results of running a step in a Task.
 type StepState struct {
-	corev1.ContainerState
-	Name          string `json:"name,omitempty"`
-	ContainerName string `json:"container,omitempty"`
-	ImageID       string `json:"imageID,omitempty"`
+	corev1.ContainerState `json:",inline"`
+	Name                  string `json:"name,omitempty"`
+	ContainerName         string `json:"container,omitempty"`
+	ImageID               string `json:"imageID,omitempty"`
 }
 
 // SidecarState reports the results of running a sidecar in a Task.
 type SidecarState struct {
-	corev1.ContainerState
-	Name          string `json:"name,omitempty"`
-	ContainerName string `json:"container,omitempty"`
-	ImageID       string `json:"imageID,omitempty"`
+	corev1.ContainerState `json:",inline"`
+	Name                  string `json:"name,omitempty"`
+	ContainerName         string `json:"container,omitempty"`
+	ImageID               string `json:"imageID,omitempty"`
 }
 
 // CloudEventDelivery is the target of a cloud event along with the state of
@@ -331,6 +350,28 @@ func (tr *TaskRun) IsSuccessful() bool {
 // IsCancelled returns true if the TaskRun's spec status is set to Cancelled state
 func (tr *TaskRun) IsCancelled() bool {
 	return tr.Spec.Status == TaskRunSpecStatusCancelled
+}
+
+// HasTimedOut returns true if the TaskRun runtime is beyond the allowed timeout
+func (tr *TaskRun) HasTimedOut() bool {
+	if tr.Status.StartTime.IsZero() {
+		return false
+	}
+	timeout := tr.GetTimeout()
+	// If timeout is set to 0 or defaulted to 0, there is no timeout.
+	if timeout == apisconfig.NoTimeoutDuration {
+		return false
+	}
+	runtime := time.Since(tr.Status.StartTime.Time)
+	return runtime > timeout
+}
+
+func (tr *TaskRun) GetTimeout() time.Duration {
+	// Use the platform default is no timeout is set
+	if tr.Spec.Timeout == nil {
+		return apisconfig.DefaultTimeoutMinutes * time.Minute
+	}
+	return tr.Spec.Timeout.Duration
 }
 
 // GetRunKey return the taskrun key for timeout handler map

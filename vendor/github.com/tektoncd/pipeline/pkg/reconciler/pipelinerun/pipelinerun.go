@@ -19,6 +19,7 @@ package pipelinerun
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"time"
@@ -119,7 +120,7 @@ var (
 // converge the two. It then updates the Status block of the Pipeline Run
 // resource with the current status of the resource.
 func (c *Reconciler) Reconcile(ctx context.Context, key string) error {
-	c.Logger.Infof("Reconciling %v", time.Now())
+	c.Logger.Infof("Reconciling key %s at %v", key, time.Now())
 
 	// Convert the namespace/name string into a distinct namespace and name
 	namespace, name, err := cache.SplitMetaNamespaceKey(key)
@@ -230,17 +231,6 @@ func (c *Reconciler) Reconcile(ctx context.Context, key string) error {
 	return merr
 }
 
-func (c *Reconciler) getPipelineFunc(tr *v1alpha1.PipelineRun) resources.GetPipeline {
-	var gtFunc resources.GetPipeline = func(name string) (v1alpha1.PipelineInterface, error) {
-		p, err := c.pipelineLister.Pipelines(tr.Namespace).Get(name)
-		if err != nil {
-			return nil, err
-		}
-		return p, nil
-	}
-	return gtFunc
-}
-
 func (c *Reconciler) updatePipelineResults(ctx context.Context, pr *v1alpha1.PipelineRun) {
 	if err := pr.ConvertTo(ctx, &v1beta1.PipelineRun{}); err != nil {
 		if ce, ok := err.(*v1beta1.CannotConvertError); ok {
@@ -249,8 +239,12 @@ func (c *Reconciler) updatePipelineResults(ctx context.Context, pr *v1alpha1.Pip
 		return
 	}
 
-	getPipelineFunc := c.getPipelineFunc(pr)
-	pipelineMeta, pipelineSpec, err := resources.GetPipelineData(ctx, pr, getPipelineFunc)
+	// TODO: Use factory func instead of hard-coding this once OCI images are supported.
+	resolver := &resources.LocalPipelineRefResolver{
+		Namespace:    pr.Namespace,
+		Tektonclient: c.PipelineClientSet,
+	}
+	pipelineMeta, pipelineSpec, err := resources.GetPipelineData(ctx, pr, resolver.GetPipeline)
 	if err != nil {
 		if ce, ok := err.(*v1beta1.CannotConvertError); ok {
 			pr.Status.MarkResourceNotConvertible(ce)
@@ -341,8 +335,12 @@ func (c *Reconciler) reconcile(ctx context.Context, pr *v1alpha1.PipelineRun) er
 		return err
 	}
 
-	getPipelineFunc := c.getPipelineFunc(pr)
-	pipelineMeta, pipelineSpec, err := resources.GetPipelineData(ctx, pr, getPipelineFunc)
+	// TODO: Use factory func instead of hard-coding this once OCI images are supported.
+	resolver := &resources.LocalPipelineRefResolver{
+		Namespace:    pr.Namespace,
+		Tektonclient: c.PipelineClientSet,
+	}
+	pipelineMeta, pipelineSpec, err := resources.GetPipelineData(ctx, pr, resolver.GetPipeline)
 	if err != nil {
 		if ce, ok := err.(*v1beta1.CannotConvertError); ok {
 			pr.Status.MarkResourceNotConvertible(ce)
@@ -357,6 +355,11 @@ func (c *Reconciler) reconcile(ctx context.Context, pr *v1alpha1.PipelineRun) er
 				fmt.Sprintf("%s/%s", pr.Namespace, pr.Name), err),
 		})
 		return nil
+	}
+
+	// Store the fetched PipelineSpec on the PipelineRun for auditing
+	if err := storePipelineSpec(ctx, pr, pipelineSpec); err != nil {
+		c.Logger.Errorf("Failed to store PipelineSpec on PipelineRun.Status for pipelinerun %s: %v", pr.Name, err)
 	}
 
 	// Propagate labels from Pipeline to PipelineRun.
@@ -733,9 +736,9 @@ func (c *Reconciler) createTaskRun(rprt *resources.ResolvedPipelineRunTask, pr *
 		pipelineRunWorkspaces[binding.Name] = binding
 	}
 	for _, ws := range rprt.PipelineTask.Workspaces {
-		taskWorkspaceName, pipelineWorkspaceName := ws.Name, ws.Workspace
+		taskWorkspaceName, pipelineTaskSubPath, pipelineWorkspaceName := ws.Name, ws.SubPath, ws.Workspace
 		if b, hasBinding := pipelineRunWorkspaces[pipelineWorkspaceName]; hasBinding {
-			tr.Spec.Workspaces = append(tr.Spec.Workspaces, taskWorkspaceByWorkspaceVolumeSource(b, taskWorkspaceName, pr.GetOwnerReference()))
+			tr.Spec.Workspaces = append(tr.Spec.Workspaces, taskWorkspaceByWorkspaceVolumeSource(b, taskWorkspaceName, pipelineTaskSubPath, pr.GetOwnerReference()))
 		} else {
 			return nil, fmt.Errorf("expected workspace %q to be provided by pipelinerun for pipeline task %q", pipelineWorkspaceName, rprt.PipelineTask.Name)
 		}
@@ -748,22 +751,34 @@ func (c *Reconciler) createTaskRun(rprt *resources.ResolvedPipelineRunTask, pr *
 
 // taskWorkspaceByWorkspaceVolumeSource is returning the WorkspaceBinding with the TaskRun specified name.
 // If the volume source is a volumeClaimTemplate, the template is applied and passed to TaskRun as a persistentVolumeClaim
-func taskWorkspaceByWorkspaceVolumeSource(wb v1alpha1.WorkspaceBinding, taskWorkspaceName string, owner metav1.OwnerReference) v1alpha1.WorkspaceBinding {
+func taskWorkspaceByWorkspaceVolumeSource(wb v1alpha1.WorkspaceBinding, taskWorkspaceName string, pipelineTaskSubPath string, owner metav1.OwnerReference) v1alpha1.WorkspaceBinding {
 	if wb.VolumeClaimTemplate == nil {
 		binding := *wb.DeepCopy()
 		binding.Name = taskWorkspaceName
+		binding.SubPath = combinedSubPath(wb.SubPath, pipelineTaskSubPath)
 		return binding
 	}
 
 	// apply template
 	binding := v1alpha1.WorkspaceBinding{
-		SubPath: wb.SubPath,
+		SubPath: combinedSubPath(wb.SubPath, pipelineTaskSubPath),
 		PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
 			ClaimName: volumeclaim.GetPersistentVolumeClaimName(wb.VolumeClaimTemplate, wb, owner),
 		},
 	}
 	binding.Name = taskWorkspaceName
 	return binding
+}
+
+// combinedSubPath returns the combined value of the optional subPath from workspaceBinding and the optional
+// subPath from pipelineTask. If both is set, they are joined with a slash.
+func combinedSubPath(workspaceSubPath string, pipelineTaskSubPath string) string {
+	if workspaceSubPath == "" {
+		return pipelineTaskSubPath
+	} else if pipelineTaskSubPath == "" {
+		return workspaceSubPath
+	}
+	return filepath.Join(workspaceSubPath, pipelineTaskSubPath)
 }
 
 func addRetryHistory(tr *v1alpha1.TaskRun) {
@@ -905,4 +920,13 @@ func (c *Reconciler) makeConditionCheckContainer(rprt *resources.ResolvedPipelin
 	cctr, err := c.PipelineClientSet.TektonV1alpha1().TaskRuns(pr.Namespace).Create(tr)
 	cc := v1alpha1.ConditionCheck(*cctr)
 	return &cc, err
+}
+
+func storePipelineSpec(ctx context.Context, pr *v1alpha1.PipelineRun, ps *v1alpha1.PipelineSpec) error {
+	// Only store the PipelineSpec once, if it has never been set before.
+	if pr.Status.PipelineSpec == nil {
+		pr.Status.PipelineSpec = &v1beta1.PipelineSpec{}
+		return ps.ConvertTo(ctx, pr.Status.PipelineSpec)
+	}
+	return nil
 }

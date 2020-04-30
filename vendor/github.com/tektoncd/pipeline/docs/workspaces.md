@@ -142,6 +142,20 @@ The entry must also include one `VolumeSource`. See [Using `VolumeSources` with 
 The following examples illustrate how to specify `Workspaces` in your `TaskRun` definition.
 For a more in-depth example, see [`Workspaces` in a `TaskRun`](../examples/v1beta1/taskruns/workspace.yaml).
 
+In the example below, a template is provided for how a `PersistentVolumeClaim` should be created for a Task's workspace named `myworkspace`. When using `volumeClaimTemplate` a new `PersistentVolumeClaim` is created for each `TaskRun` and it allows the user to specify e.g. size and StorageClass for the volume.
+
+```yaml
+workspaces:
+- name: myworkspace
+  volumeClaimTemplate:
+    spec:
+      accessModes: 
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: 1Gi
+```
+
 In the example below, an existing `PersistentVolumeClaim` called `mypvc` is used for a Task's `workspace`
 called `myworkspace`. It exposes only the subdirectory `my-subdir` from that `PersistentVolumeClaim`:
 
@@ -222,6 +236,10 @@ spec:
         - use-ws-from-pipeline # important: use-ws-from-pipeline writes to the workspace first
 ```
 
+Include a `subPath` in the workspace binding to mount different parts of the same volume for different Tasks. See [a full example of this kind of Pipeline](../examples/v1beta1/pipelineruns/pipelinerun-using-different-subpaths-of-workspace.yaml) which writes data to two adjacent directories on the same Volume.
+
+The `subPath` specified in a `Pipeline` will be appended to any `subPath` specified as part of the `PipelineRun` workspace declaration. So a `PipelineRun` declaring a Workspace with `subPath` of `/foo` for a `Pipeline` who binds it to a `Task` with `subPath` of `/bar` will end up mounting the `Volume`'s `/foo/bar` directory.
+
 #### Specifying `Workspace` order in a `Pipeline`
 
 Sharing a `Workspace` between `Tasks` requires you to define the order in which those `Tasks`
@@ -255,6 +273,20 @@ The entry must also include one `VolumeSource`. See [Using `VolumeSources` with 
 
 The examples below illustrate how to specify `Workspaces` in your `PipelineRuns`. For a more in-depth example, see the
 [`Workspaces` in `PipelineRun`](../examples/v1beta1/pipelineruns/workspaces.yaml) YAML sample.
+
+In the example below, a template is provided for how a `PersistentVolumeClaim` should be created for a workspace named `myworkspace` declared in a `Pipeline`. When using `volumeClaimTemplate` a new `PersistentVolumeClaim` is created for each `PipelineRun` and it allows the user to specify e.g. size and StorageClass for the volume.
+
+```yaml
+workspaces:
+- name: myworkspace
+  volumeClaimTemplate:
+    spec:
+      accessModes: 
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: 1Gi
+```
 
 In the example below, an existing `PersistentVolumeClaim` named `mypvc` is used for a `Workspace`
 named `myworkspace` declared in a `Pipeline`. It exposes only the subdirectory `my-subdir` from that `PersistentVolumeClaim`: 
@@ -307,7 +339,7 @@ The `persistentVolumeClaim` field references an existing [`persistentVolumeClaim
 
 The `volumeClaimTemplate` is a template of a [`persistentVolumeClaim` volume](https://kubernetes.io/docs/concepts/storage/volumes/#persistentvolumeclaim), created for each `PipelineRun` or `TaskRun`. 
 When the volume is created from a template in a `PipelineRun` or `TaskRun` it will be deleted when the `PipelineRun` or `TaskRun` is deleted.
-`volumeClaimTemplate` volumes are a good choice for sharing data among `Tasks` within a `Pipeline` when the volume is only used during a `PipelineRun` or `TaskRun`.
+`volumeClaimTemplate` volumes are a good choice for sharing data among `Tasks` within a `Pipeline` when the volume is only used during a `PipelineRun` or `TaskRun`. See [`Workspaces` from a volumeClaimTemplate in a `PipelineRun`](../examples/v1beta1/pipelineruns/workspace-from-volumeclaimtemplate.yaml) for a complete example.
 
 #### `configMap`
 
@@ -336,3 +368,4 @@ See the following in-depth examples of configuring `Workspaces`:
 
 - [`Workspaces` in a `TaskRun`](../examples/v1beta1/taskruns/workspace.yaml)
 - [`Workspaces` in a `PipelineRun`](../examples/v1beta1/pipelineruns/workspaces.yaml)
+- [`Workspaces` from a volumeClaimTemplate in a `PipelineRun`](../examples/v1beta1/pipelineruns/workspace-from-volumeclaimtemplate.yaml)
